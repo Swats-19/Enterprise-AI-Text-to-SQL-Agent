@@ -1,3 +1,5 @@
+# mon.py
+
 import time
 import pandas as pd
 import streamlit as st
@@ -141,7 +143,7 @@ st.markdown("""
 # ============================================================
 st.markdown("""
 <div class="hero">
-    <h1>🤖 Enterprise AI Text-to-SQL</h1>
+    <h1>🤖 AI Text-to-SQL</h1>
     <p>Monolithic Architecture • SQLite • Gemini 2.0 Flash</p>
 </div>
 """, unsafe_allow_html=True)

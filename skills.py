@@ -155,7 +155,7 @@ st.markdown("""
 # ============================================================
 st.markdown("""
 <div class="hero">
-    <h1>🧠 AI Text-to-SQL</h1>
+    <h1>🤖 AI Text-to-SQL</h1>
     <p>Skills Architecture • LangGraph • PostgreSQL • Self-Healing</p>
 </div>
 """, unsafe_allow_html=True)

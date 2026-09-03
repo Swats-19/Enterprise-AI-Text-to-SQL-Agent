@@ -1,3 +1,5 @@
+# app.py
+
 import sqlite3
 
 connection = sqlite3.connect("ecommerce.db")

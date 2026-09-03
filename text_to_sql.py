@@ -1,3 +1,5 @@
+# text_to_sql.py
+
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from llm import llm
@@ -11,10 +13,11 @@ def generate_sql(question: str):
         HumanMessage(content=question)
     ]
 
-    response = llm.invoke(messages)
+    # Use the new LLMClient interface
+    response = llm.invoke_generator(messages)
 
-    sql_query = response.content.strip()
+    sql_query = response["content"].strip()
 
-    usage = response.usage_metadata
+    usage = response.get("usage", {})
 
     return sql_query, usage
