@@ -1,6 +1,6 @@
-# llm.py
-
 import os
+import time
+
 from dotenv import load_dotenv
 
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -8,11 +8,15 @@ from langchain_groq import ChatGroq
 from langchain_cohere import ChatCohere
 
 
+# ============================================================
+# LOAD ENVIRONMENT
+# ============================================================
+
 load_dotenv()
 
 
 # ============================================================
-# NODE 2: SQL GENERATOR MODELS
+# MODEL CONFIGURATION
 # ============================================================
 
 NODE_2_GEMINI = [
@@ -32,10 +36,6 @@ NODE_2_GROQ = [
 ]
 
 
-# ============================================================
-# NODE 3: JUDGE MODELS
-# ============================================================
-
 NODE_3_GEMINI = [
     "gemini-3.5-flash-lite",
     "gemini-3.6-flash",
@@ -49,86 +49,204 @@ NODE_3_GROQ = [
 
 
 # ============================================================
-# COHERE FALLBACK
-# ============================================================
-
-COHERE_MODEL = "command-r-plus"
-
-
-# ============================================================
-# CONTENT EXTRACTION
+# RESPONSE CONTENT EXTRACTION
 # ============================================================
 
 def extract_content(response):
     """
-    Convert LangChain provider responses into plain text.
+    Extract text content from LangChain responses.
 
-    Providers can return:
-        str
-        list[str]
-        list[dict]
-        dict
+    Supports:
+    - string
+    - dict
+    - list
     """
 
-    content = response.content
-
-    # --------------------------------------------------------
-    # Already plain string
-    # --------------------------------------------------------
+    content = getattr(
+        response,
+        "content",
+        response
+    )
 
     if isinstance(content, str):
-        return content.strip()
-
-    # --------------------------------------------------------
-    # Dictionary
-    # --------------------------------------------------------
+        return content
 
     if isinstance(content, dict):
 
-        if "text" in content:
-            return str(
-                content["text"]
-            ).strip()
-
-        return str(content).strip()
-
-    # --------------------------------------------------------
-    # List
-    # --------------------------------------------------------
+        return content.get(
+            "text",
+            str(content)
+        )
 
     if isinstance(content, list):
 
-        text_parts = []
+        parts = []
 
         for item in content:
 
-            if isinstance(item, dict):
+            if isinstance(item, str):
 
-                if "text" in item:
+                parts.append(item)
 
-                    text_parts.append(
-                        str(item["text"])
-                    )
+            elif isinstance(item, dict):
 
-            elif isinstance(item, str):
-
-                text_parts.append(item)
-
-            else:
-
-                text_parts.append(
-                    str(item)
+                text = item.get(
+                    "text"
                 )
 
-        return " ".join(
-            text_parts
-        ).strip()
+                if text:
+                    parts.append(text)
 
-    # --------------------------------------------------------
-    # Anything else
-    # --------------------------------------------------------
+        return "".join(parts)
 
-    return str(content).strip()
+    return str(content)
+
+
+# ============================================================
+# TOKEN USAGE EXTRACTION
+# ============================================================
+
+def extract_usage(response):
+    """
+    Extract token usage from LangChain/provider responses.
+
+    Supports:
+
+    1. LangChain usage_metadata
+    2. response_metadata.token_usage
+    3. response_metadata.usage
+    4. prompt_tokens/completion_tokens
+    """
+
+    # ========================================================
+    # METHOD 1: usage_metadata
+    # ========================================================
+
+    usage = getattr(
+        response,
+        "usage_metadata",
+        None
+    )
+
+    if isinstance(usage, dict):
+
+        input_tokens = (
+            usage.get("input_tokens")
+            or usage.get("prompt_tokens")
+            or 0
+        )
+
+        output_tokens = (
+            usage.get("output_tokens")
+            or usage.get("completion_tokens")
+            or 0
+        )
+
+        total_tokens = (
+            usage.get("total_tokens")
+            or (
+                input_tokens
+                + output_tokens
+            )
+        )
+
+        return {
+            "input_tokens": int(
+                input_tokens
+            ),
+
+            "output_tokens": int(
+                output_tokens
+            ),
+
+            "total_tokens": int(
+                total_tokens
+            )
+        }
+
+    # ========================================================
+    # METHOD 2: response_metadata
+    # ========================================================
+
+    response_metadata = getattr(
+        response,
+        "response_metadata",
+        {}
+    )
+
+    if isinstance(
+        response_metadata,
+        dict
+    ):
+
+        token_usage = (
+            response_metadata.get(
+                "token_usage"
+            )
+            or response_metadata.get(
+                "usage"
+            )
+            or {}
+        )
+
+        if isinstance(
+            token_usage,
+            dict
+        ):
+
+            input_tokens = (
+                token_usage.get(
+                    "input_tokens"
+                )
+                or token_usage.get(
+                    "prompt_tokens"
+                )
+                or 0
+            )
+
+            output_tokens = (
+                token_usage.get(
+                    "output_tokens"
+                )
+                or token_usage.get(
+                    "completion_tokens"
+                )
+                or 0
+            )
+
+            total_tokens = (
+                token_usage.get(
+                    "total_tokens"
+                )
+                or (
+                    input_tokens
+                    + output_tokens
+                )
+            )
+
+            return {
+                "input_tokens": int(
+                    input_tokens
+                ),
+
+                "output_tokens": int(
+                    output_tokens
+                ),
+
+                "total_tokens": int(
+                    total_tokens
+                )
+            }
+
+    # ========================================================
+    # NO USAGE FOUND
+    # ========================================================
+
+    return {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0
+    }
 
 
 # ============================================================
@@ -148,17 +266,12 @@ class LLMClient:
         for i in range(1, 4):
 
             key = os.getenv(
-                f"GOOGLE_API_KEY_{i}"
+                f"GEMINI_API_KEY_{i}"
             )
 
             if key:
-
                 self.gemini_keys.append(
                     key
-                )
-
-                print(
-                    f"   ✅ Loaded Gemini Key {i}"
                 )
 
         # ----------------------------------------------------
@@ -174,318 +287,264 @@ class LLMClient:
             )
 
             if key:
-
                 self.groq_keys.append(
                     key
-                )
-
-                print(
-                    f"   ✅ Loaded Groq Key {i}"
                 )
 
         # ----------------------------------------------------
         # COHERE
         # ----------------------------------------------------
 
-        self.cohere_key = (
-            os.getenv("COHERE_API_KEY")
-            or
-            os.getenv("COHERE_API_KEY_1")
+        self.cohere_keys = []
+
+        cohere_key = (
+            os.getenv(
+                "COHERE_API_KEY"
+            )
+            or os.getenv(
+                "COHERE_API_KEY_1"
+            )
         )
 
-        if self.cohere_key:
+        if cohere_key:
 
-            print(
-                "   ✅ Loaded Cohere key"
+            self.cohere_keys.append(
+                cohere_key
             )
 
-        print(
-            f"\n🔑 Total: "
-            f"{len(self.gemini_keys)} Gemini keys, "
-            f"{len(self.groq_keys)} Groq keys"
-        )
-
     # ========================================================
-    # PROVIDER TRY LOOP
+    # PROVIDER EXECUTION
     # ========================================================
 
     def _try_providers(
         self,
         prompt,
-        role,
         gemini_models,
         groq_models,
-        fallback_text
     ):
 
         # ====================================================
         # GEMINI
         # ====================================================
 
-        for key in self.gemini_keys:
+        for api_key in self.gemini_keys:
 
-            for model in gemini_models:
+            for model_name in gemini_models:
 
                 try:
 
-                    print(
-                        f"   [LLM:{role}] "
-                        f"Trying Gemini {model}"
+                    model = ChatGoogleGenerativeAI(
+                        model=model_name,
+                        google_api_key=api_key,
+                        temperature=0
                     )
 
-                    llm = ChatGoogleGenerativeAI(
-                        model=model,
-                        temperature=0,
-                        google_api_key=key
-                    )
+                    start = time.time()
 
-                    start_time = __import__(
-                        "time"
-                    ).time()
-
-                    response = llm.invoke(
+                    response = model.invoke(
                         prompt
                     )
 
                     latency = (
-                        __import__("time").time()
-                        - start_time
+                        time.time()
+                        - start
                     )
 
                     content = extract_content(
                         response
                     )
 
+                    usage = extract_usage(
+                        response
+                    )
+
                     print(
-                        f"   [LLM:{role}] "
-                        f"✅ Gemini {model} succeeded!"
+                        f"[LLM] Gemini "
+                        f"{model_name} "
+                        f"successful | "
+                        f"Tokens: "
+                        f"{usage['input_tokens']}"
+                        f"+"
+                        f"{usage['output_tokens']}"
                     )
 
                     return {
                         "content": content,
-                        "provider": f"Gemini {model}",
-                        "usage": {},
+
+                        "provider":
+                            f"gemini/{model_name}",
+
+                        "usage": usage,
+
                         "latency": latency
                     }
 
                 except Exception as e:
 
                     print(
-                        f"   [LLM:{role}] "
-                        f"❌ Gemini {model} failed: "
-                        f"{str(e)[:100]}..."
+                        f"[LLM] Gemini "
+                        f"{model_name} "
+                        f"failed: {e}"
                     )
-
-                    continue
 
         # ====================================================
         # GROQ
         # ====================================================
 
-        for key in self.groq_keys:
+        for api_key in self.groq_keys:
 
-            for model in groq_models:
+            for model_name in groq_models:
 
                 try:
 
-                    print(
-                        f"   [LLM:{role}] "
-                        f"Trying Groq {model}"
+                    model = ChatGroq(
+                        model=model_name,
+                        groq_api_key=api_key,
+                        temperature=0
                     )
 
-                    llm = ChatGroq(
-                        model=model,
-                        temperature=0,
-                        api_key=key
-                    )
+                    start = time.time()
 
-                    start_time = __import__(
-                        "time"
-                    ).time()
-
-                    response = llm.invoke(
+                    response = model.invoke(
                         prompt
                     )
 
                     latency = (
-                        __import__("time").time()
-                        - start_time
+                        time.time()
+                        - start
                     )
 
                     content = extract_content(
                         response
                     )
 
+                    usage = extract_usage(
+                        response
+                    )
+
                     print(
-                        f"   [LLM:{role}] "
-                        f"✅ Groq {model} succeeded!"
+                        f"[LLM] Groq "
+                        f"{model_name} "
+                        f"successful | "
+                        f"Tokens: "
+                        f"{usage['input_tokens']}"
+                        f"+"
+                        f"{usage['output_tokens']}"
                     )
 
                     return {
                         "content": content,
-                        "provider": f"Groq {model}",
-                        "usage": {},
+
+                        "provider":
+                            f"groq/{model_name}",
+
+                        "usage": usage,
+
                         "latency": latency
                     }
 
                 except Exception as e:
 
                     print(
-                        f"   [LLM:{role}] "
-                        f"❌ Groq {model} failed: "
-                        f"{str(e)[:100]}..."
+                        f"[LLM] Groq "
+                        f"{model_name} "
+                        f"failed: {e}"
                     )
-
-                    continue
 
         # ====================================================
         # COHERE
         # ====================================================
 
-        if self.cohere_key:
+        for api_key in self.cohere_keys:
 
             try:
 
-                print(
-                    f"   [LLM:{role}] "
-                    f"Trying Cohere {COHERE_MODEL}"
+                model = ChatCohere(
+                    model="command-r-plus",
+                    cohere_api_key=api_key,
+                    temperature=0
                 )
 
-                llm = ChatCohere(
-                    model=COHERE_MODEL,
-                    temperature=0,
-                    cohere_api_key=self.cohere_key
-                )
+                start = time.time()
 
-                start_time = __import__(
-                    "time"
-                ).time()
-
-                response = llm.invoke(
+                response = model.invoke(
                     prompt
                 )
 
                 latency = (
-                    __import__("time").time()
-                    - start_time
+                    time.time()
+                    - start
                 )
 
                 content = extract_content(
                     response
                 )
 
+                usage = extract_usage(
+                    response
+                )
+
                 print(
-                    f"   [LLM:{role}] "
-                    f"✅ Cohere succeeded!"
+                    "[LLM] Cohere successful | "
+                    f"Tokens: "
+                    f"{usage['input_tokens']}"
+                    f"+"
+                    f"{usage['output_tokens']}"
                 )
 
                 return {
                     "content": content,
-                    "provider": f"Cohere {COHERE_MODEL}",
-                    "usage": {},
+
+                    "provider":
+                        "cohere/command-r-plus",
+
+                    "usage": usage,
+
                     "latency": latency
                 }
 
             except Exception as e:
 
                 print(
-                    f"   [LLM:{role}] "
-                    f"❌ Cohere failed: "
-                    f"{str(e)[:100]}..."
+                    f"[LLM] Cohere failed: {e}"
                 )
 
         # ====================================================
-        # FALLBACK
+        # ALL PROVIDERS FAILED
         # ====================================================
 
-        print(
-            f"   [LLM:{role}] "
-            f"⚠️ ALL PROVIDERS FAILED."
+        raise RuntimeError(
+            "All configured LLM providers failed."
         )
-
-        print(
-            f"   [LLM:{role}] "
-            f"Using hardcoded fallback."
-        )
-
-        return {
-            "content": fallback_text,
-            "provider": "Hardcoded Fallback",
-            "usage": {},
-            "latency": 0
-        }
 
     # ========================================================
-    # NODE 2
+    # GENERATOR
     # ========================================================
 
     def invoke_generator(
         self,
-        prompt: str
-    ) -> dict:
-
-        fallback_sql = """
-SELECT
-    c.customer_id,
-    c.first_name,
-    c.last_name,
-    c.email,
-    SUM(o.total_amount) AS total_spend,
-    COUNT(o.order_id) AS total_orders
-FROM customers c
-JOIN orders o
-    ON c.customer_id = o.customer_id
-GROUP BY
-    c.customer_id,
-    c.first_name,
-    c.last_name,
-    c.email
-ORDER BY total_spend DESC
-LIMIT 5;
-"""
+        prompt
+    ):
 
         return self._try_providers(
             prompt,
-            "Generator",
             NODE_2_GEMINI,
-            NODE_2_GROQ,
-            fallback_sql
+            NODE_2_GROQ
         )
 
     # ========================================================
-    # NODE 3
+    # JUDGE
     # ========================================================
 
     def invoke_judge(
         self,
-        prompt: str
-    ) -> dict:
-
-        fallback_json = (
-            '{"approved": true, '
-            '"feedback": '
-            '"Fallback judge response."}'
-        )
+        prompt
+    ):
 
         return self._try_providers(
             prompt,
-            "Judge",
             NODE_3_GEMINI,
-            NODE_3_GROQ,
-            fallback_json
-        )
-
-    # ========================================================
-    # DEFAULT
-    # ========================================================
-
-    def invoke(
-        self,
-        prompt: str
-    ) -> dict:
-
-        return self.invoke_generator(
-            prompt
+            NODE_3_GROQ
         )
 
 

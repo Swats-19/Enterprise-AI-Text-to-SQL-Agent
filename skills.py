@@ -4,12 +4,8 @@ import time
 import pandas as pd
 import streamlit as st
 import sqlparse
-
-from skills.orchestrator import run_agent
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
+from skills.orchestrator import run_agent
 
 # ============================================================
 # PAGE CONFIG
@@ -159,7 +155,7 @@ st.markdown("""
 # ============================================================
 st.markdown("""
 <div class="hero">
-    <h1>🧠 Enterprise AI Text-to-SQL</h1>
+    <h1>🧠 AI Text-to-SQL</h1>
     <p>Skills Architecture • LangGraph • PostgreSQL • Self-Healing</p>
 </div>
 """, unsafe_allow_html=True)
@@ -171,9 +167,9 @@ with st.sidebar:
     st.header("⚙️ Configuration")
     
     db_url = st.text_input(
-    "Database URL",
-    value=os.getenv("DATABASE_URL", ""),
-    help="Connection string for your database"
+        "Database URL",
+        value=os.getenv("DATABASE_URL", ""),
+        help="Connection string for your database"
     )
     
     st.divider()
@@ -253,6 +249,12 @@ if "human_feedback_text" not in st.session_state:
     st.session_state.human_feedback_text = ""
 
 # ============================================================
+# NEW: LangGraph thread ID for checkpoint resume
+# ============================================================
+if "current_thread_id" not in st.session_state:
+    st.session_state.current_thread_id = None
+
+# ============================================================
 # STEP 1: INPUT + GENERATE
 # ============================================================
 if run and st.session_state.step == "input":
@@ -260,12 +262,13 @@ if run and st.session_state.step == "input":
         st.warning("Please enter a question.")
         st.stop()
     
-    # Reset state
+    # Reset state for new query
     st.session_state.step = "input"
     st.session_state.agent_state = None
     st.session_state.agent_result = None
     st.session_state.human_decision = None
     st.session_state.human_feedback_text = ""
+    st.session_state.current_thread_id = None
     
     with st.spinner("🧠 Agent is thinking..."):
         try:
@@ -280,6 +283,7 @@ if run and st.session_state.step == "input":
             if result.get("status") == "needs_human_approval":
                 st.session_state.agent_state = result.get("state")
                 st.session_state.agent_result = result
+                st.session_state.current_thread_id = result.get("thread_id")
                 st.session_state.step = "approval"
                 st.rerun()
             else:
@@ -291,7 +295,7 @@ if run and st.session_state.step == "input":
             st.error(f"❌ Error: {str(e)}")
 
 # ============================================================
-# STEP 2: HUMAN APPROVAL (FIXED)
+# STEP 2: HUMAN APPROVAL
 # ============================================================
 if st.session_state.step == "approval":
     result = st.session_state.agent_result
@@ -308,12 +312,6 @@ if st.session_state.step == "approval":
     
     st.code(formatted_sql, language="sql")
     
-    # ✅ Get stored values
-    question = st.session_state.current_question
-    db_url = st.session_state.current_db_url
-    demo_mode = st.session_state.current_demo_mode
-    agent_state = st.session_state.agent_state  # ✅ MUST PASS THIS
-    
     col1, col2 = st.columns([2, 3])
     
     with col1:
@@ -322,6 +320,8 @@ if st.session_state.step == "approval":
         
         with col_btn1:
             if st.button("✅ Approve", use_container_width=True, type="primary"):
+                st.session_state.human_decision = "approve"
+                st.session_state.step = "input"
                 with st.spinner("⏳ Executing..."):
                     result = run_agent(
                         question=question,
@@ -330,14 +330,22 @@ if st.session_state.step == "approval":
                         skip_human=False,
                         resume=True,
                         human_decision={"approved": True},
-                        state=agent_state   # ✅ CRITICAL: Pass state
+                        thread_id=st.session_state.current_thread_id
                     )
-                    st.session_state.agent_result = result
-                    st.session_state.step = "results"
+                    if result.get("status") == "needs_human_approval":
+                        st.session_state.agent_state = result.get("state")
+                        st.session_state.agent_result = result
+                        st.session_state.current_thread_id = result.get("thread_id")
+                        st.session_state.step = "approval"
+                    else:
+                        st.session_state.agent_result = result
+                        st.session_state.step = "results"
                     st.rerun()
         
         with col_btn2:
             if st.button("❌ Reject", use_container_width=True):
+                st.session_state.human_decision = "reject"
+                st.session_state.step = "input"
                 with st.spinner("🔄 Rejected. Regenerating..."):
                     result = run_agent(
                         question=question,
@@ -346,11 +354,12 @@ if st.session_state.step == "approval":
                         skip_human=False,
                         resume=True,
                         human_decision={"feedback": "User rejected the query. Please generate a different SQL."},
-                        state=agent_state   # ✅ CRITICAL: Pass state
+                        thread_id=st.session_state.current_thread_id
                     )
                     if result.get("status") == "needs_human_approval":
                         st.session_state.agent_state = result.get("state")
                         st.session_state.agent_result = result
+                        st.session_state.current_thread_id = result.get("thread_id")
                         st.session_state.step = "approval"
                     else:
                         st.session_state.agent_result = result
@@ -367,6 +376,9 @@ if st.session_state.step == "approval":
         )
         if st.button("📤 Submit Feedback", use_container_width=True):
             if feedback:
+                st.session_state.human_feedback_text = feedback
+                st.session_state.human_decision = "feedback"
+                st.session_state.step = "input"
                 with st.spinner("🔄 Regenerating with feedback..."):
                     result = run_agent(
                         question=question,
@@ -375,11 +387,12 @@ if st.session_state.step == "approval":
                         skip_human=False,
                         resume=True,
                         human_decision={"feedback": feedback},
-                        state=agent_state   # ✅ CRITICAL: Pass state
+                        thread_id=st.session_state.current_thread_id
                     )
                     if result.get("status") == "needs_human_approval":
                         st.session_state.agent_state = result.get("state")
                         st.session_state.agent_result = result
+                        st.session_state.current_thread_id = result.get("thread_id")
                         st.session_state.step = "approval"
                     else:
                         st.session_state.agent_result = result
@@ -415,6 +428,36 @@ if st.session_state.step == "results":
         metrics = result.get("metrics", {})
         attempts = result.get("attempts", {})
         
+        # ------------------------------------------------------------
+        # Calculate actual node executions from token metrics/state
+        # ------------------------------------------------------------
+        judge_attempts = attempts.get("judge", 0)
+        human_attempts = attempts.get("human", 0)
+        execution_attempts = attempts.get("execution", 0)
+        
+        # If backend counters represent retries only, successful workflows
+        # still need to show the nodes that actually ran.
+        if judge_attempts == 0 and (
+            metrics.get("judge_input_tokens", 0) > 0
+            or metrics.get("judge_output_tokens", 0) > 0
+        ):
+            judge_attempts = 1
+        
+        if human_attempts == 0 and result.get("human_approved") is not None:
+            human_attempts = 1
+        
+        if execution_attempts == 0 and (
+            metrics.get("execution_time", 0) > 0
+            or result.get("status") == "success"
+        ):
+            execution_attempts = 1
+        
+        display_attempts = {
+            "judge": judge_attempts,
+            "human": human_attempts,
+            "execution": execution_attempts
+        }
+        
         col1, col2, col3, col4, col5 = st.columns(5)
         
         with col1:
@@ -441,7 +484,6 @@ if st.session_state.step == "results":
             """, unsafe_allow_html=True)
         
         with col3:
-            judge_attempts = attempts.get("judge", 0)
             st.markdown(f"""
             <div class="metric-card">
                 <div class="metric-title">🔄 Judge Attempts</div>
@@ -508,7 +550,7 @@ if st.session_state.step == "results":
         
         with tab3:
             st.markdown("#### 🔄 Attempts")
-            st.json(attempts)
+            st.json(display_attempts)
             st.markdown("#### 📊 Detailed Metrics")
             st.json(metrics)
             st.markdown("#### 📋 Full Result")

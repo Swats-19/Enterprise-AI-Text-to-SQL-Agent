@@ -1,21 +1,33 @@
-
 # skills/orchestrator.py
 
+from uuid import uuid4
+import os
+
+from database.factory import create_adapter
+
 from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import interrupt, Command
 
 from skills.state import AgentState
 from skills.utils import filter_schema
+
+# IMPORTANT: import the node functions from your existing files
 from skills.nodes import (
+    sql_generator,
     sql_judge,
-    human_approval,
     sql_executor,
-    result_explainer
-)
-from skills.core import (
+    result_explainer,
     detect_and_connect,
-    read_schema_from_adapter,
-    sql_generator
+    read_schema_from_adapter
 )
+
+
+# ============================================================
+# SHARED LANGGRAPH CHECKPOINTER
+# ============================================================
+
+checkpointer = MemorySaver()
 
 
 # ============================================================
@@ -24,12 +36,8 @@ from skills.core import (
 
 def node_connect(state: AgentState) -> AgentState:
     result = detect_and_connect(state["db_url"])
-
     state["db_type"] = result["db_type"]
-    state["adapter"] = result["adapter"]
-
     print(f"[Node 1.1] Connected to: {state['db_type']}")
-
     return state
 
 
@@ -38,26 +46,16 @@ def node_connect(state: AgentState) -> AgentState:
 # ============================================================
 
 def node_schema(state: AgentState) -> AgentState:
-    full_schema = read_schema_from_adapter(
-        state["adapter"]
-    )
-
+    # Create adapter locally (not stored in state)
+    adapter = create_adapter(state["db_url"])
+    full_schema = read_schema_from_adapter(adapter)
     print(f"[Node 1.2] Found {len(full_schema)} tables")
 
     state["schema_metadata"] = full_schema
-
-    filtered_schema = filter_schema(
-        full_schema,
-        state["question"]
-    )
-
+    filtered_schema = filter_schema(full_schema, state["question"])
     state["filtered_schema"] = filtered_schema
 
-    print(
-        f"[Node 1.2] After filtering: "
-        f"{len(filtered_schema)} tables"
-    )
-
+    print(f"[Node 1.2] After filtering: {len(filtered_schema)} tables")
     return state
 
 
@@ -67,98 +65,99 @@ def node_schema(state: AgentState) -> AgentState:
 
 def node_generator(state: AgentState) -> AgentState:
     result = sql_generator(state)
-
     state.update(result)
-
     # Store generator metrics
-    state["metrics"].update(
-        result.get("metrics", {})
-    )
-
+    state["metrics"].update(result.get("metrics", {}))
     return state
 
 
 # ============================================================
-# NODE 3: LLM JUDGE
+# NODE 3: LLM JUDGE (UPDATED – counts every execution)
 # ============================================================
 
 def node_judge(state: AgentState) -> AgentState:
+    # Increment attempt counter on every judge evaluation
+    state["judge_attempts"] = state.get("judge_attempts", 0) + 1
+    print(f"[Node 3] Judge evaluation #{state['judge_attempts']}")
+
     result = sql_judge(state)
-
     state.update(result)
-
-    # Store judge metrics
-    state["metrics"].update(
-        result.get("metrics", {})
-    )
-
-    # Count rejected Judge evaluations here.
-    # This update happens inside a LangGraph node,
-    # so the state is carried into the next node.
-    if state.get("judge_approved") is not True:
-        state["judge_attempts"] = (
-            state.get("judge_attempts", 0) + 1
-        )
-
+    state["metrics"].update(result.get("metrics", {}))
     return state
 
+
 # ============================================================
-# NODE 4: HUMAN APPROVAL
+# NODE 4: HUMAN APPROVAL (UPDATED – uses interrupt)
 # ============================================================
 
 def node_human(state: AgentState) -> AgentState:
     """
     Node 4: Human-in-the-Loop.
-
-    Normal mode:
-        Human chooses:
-            YES → Node 5
-            Feedback → Node 2
-
-    Skip-human mode:
-        Automatically approve.
-        Used for automated testing only.
+    - skip_human: auto-approve (for testing)
+    - Normal: interrupt() and wait for UI decision
     """
-
     if state.get("skip_human", False):
-
         print("[Node 4] Human approval skipped (test mode).")
-
         state["human_approved"] = True
         state["human_feedback"] = None
         state["status"] = "approved"
-
         return state
 
-    result = human_approval(state)
+    # Real human‑in‑the‑loop
+    decision = interrupt({
+        "type": "human_approval",
+        "sql": state.get("sql", ""),
+        "question": state.get("question", ""),
+        "judge_feedback": state.get("judge_feedback")
+    })
 
-    state.update(result)
+    if isinstance(decision, dict) and decision.get("approved"):
+        print("[Node 4] Human approved SQL.")
+        state["human_approved"] = True
+        state["human_feedback"] = None
+        state["feedback"] = None
+        state["status"] = "approved"
+        return state
 
+    if isinstance(decision, dict) and decision.get("feedback"):
+        feedback = decision["feedback"]
+        print(f"[Node 4] Human rejected SQL. Feedback: {feedback}")
+        state["human_approved"] = False
+        state["human_feedback"] = feedback
+        state["feedback"] = feedback
+        state["sql"] = None
+        state["judge_approved"] = None
+        state["judge_feedback"] = None
+        state["status"] = "feedback"
+        return state
+
+    # Invalid decision
+    state["human_approved"] = False
+    state["human_feedback"] = "Invalid human decision. Please regenerate the SQL."
+    state["feedback"] = state["human_feedback"]
+    state["sql"] = None
+    state["judge_approved"] = None
+    state["judge_feedback"] = None
+    state["status"] = "feedback"
     return state
 
 
 # ============================================================
-# NODE 5: QUERY EXECUTOR
+# NODE 5: QUERY EXECUTOR (UPDATED – counts every execution)
 # ============================================================
 
 def node_executor(state: AgentState) -> AgentState:
-    result = sql_executor(state)
+    # Increment attempt counter on every execution attempt
+    state["execution_attempts"] = state.get("execution_attempts", 0) + 1
+    print(f"[Node 5] Execution attempt #{state['execution_attempts']}")
 
+    # Create a temporary adapter for this execution only
+    exec_state = dict(state)
+    exec_state["adapter"] = create_adapter(state["db_url"])
+
+    result = sql_executor(exec_state)
     state.update(result)
-
-    # Store execution metrics
-    state["metrics"].update(
-        result.get("metrics", {})
-    )
-
-    # Count failed executions inside the node
-    # so LangGraph carries the updated state.
-    if state.get("execution_error"):
-
-        state["execution_attempts"] = (
-            state.get("execution_attempts", 0) + 1
-        )
-
+    state["metrics"].update(result.get("metrics", {}))
     return state
 
 
@@ -168,146 +167,66 @@ def node_executor(state: AgentState) -> AgentState:
 
 def node_explainer(state: AgentState) -> AgentState:
     result = result_explainer(state)
-
     state.update(result)
-
     return state
 
 
 # ============================================================
-# ROUTER AFTER NODE 3
+# ROUTER AFTER NODE 3 (UPDATED – counts human cycle)
 # ============================================================
 
 def route_after_judge(state: AgentState) -> str:
-    """
-    Judge approved:
-        → Node 4 Human Approval
-
-    Judge rejected:
-        → Node 2 SQL Generator
-
-    Maximum judge attempts:
-        → END
-    """
-
-    # --------------------------------------------------------
-    # Judge approved
-    # --------------------------------------------------------
-
     if state.get("judge_approved") is True:
+        # A new human approval cycle starts here
+        state["human_attempts"] = state.get("human_attempts", 0) + 1
+        print(f"[Router] Human approval #{state['human_attempts']} begins.")
         return "node_human"
 
-    # --------------------------------------------------------
     # Judge rejected
-    # --------------------------------------------------------
-
-    attempts = state.get(
-        "judge_attempts",
-        0
-    )
-
-    max_attempts = state.get(
-        "max_judge_attempts",
-        3
-    )
-
-    print(
-        f"[Router] Judge rejected SQL. "
-        f"Attempt {attempts}/{max_attempts}"
-    )
-
-    # --------------------------------------------------------
-    # Maximum attempts
-    # --------------------------------------------------------
+    attempts = state.get("judge_attempts", 0)
+    max_attempts = state.get("max_judge_attempts", 3)
 
     if attempts >= max_attempts:
-
-        print(
-            "[Router] ❌ Maximum judge attempts reached."
-        )
-
         state["status"] = "judge_failed"
-
         return "end"
 
-    # --------------------------------------------------------
-    # Give feedback to Node 2
-    # --------------------------------------------------------
-
-    state["feedback"] = state.get(
-        "judge_feedback",
-        "SQL was rejected by the judge."
-    )
+    # Combine feedbacks if both exist
+    human_fb = state.get("human_feedback")
+    judge_fb = state.get("judge_feedback")
+    if human_fb and judge_fb:
+        state["feedback"] = f"Human requirement:\n{human_fb}\n\nJudge feedback:\n{judge_fb}"
+    else:
+        state["feedback"] = human_fb or judge_fb or "SQL was rejected by the judge."
 
     state["sql"] = None
     state["judge_approved"] = None
-
     return "node_generator"
 
 
 # ============================================================
-# ROUTER AFTER NODE 4
+# ROUTER AFTER NODE 4 (UPDATED – no increment)
 # ============================================================
 
 def route_after_human(state: AgentState) -> str:
-    """
-    Human approved:
-        → Node 5 Executor
-
-    Human rejected:
-        → Node 2 SQL Generator
-
-    Maximum human attempts reached:
-        → END
-    """
-
-    # --------------------------------------------------------
-    # Human approved
-    # --------------------------------------------------------
-
     if state.get("human_approved") is True:
-
+        print(f"[Router] Human approved (attempt #{state.get('human_attempts', 0)})")
         return "node_executor"
 
-    # --------------------------------------------------------
-    # Human rejected
-    # --------------------------------------------------------
+    # Human rejected or gave feedback
+    if state.get("human_feedback"):
+        state["feedback"] = state["human_feedback"]
 
-    feedback = state.get("human_feedback")
+    attempts = state.get("human_attempts", 0)
+    max_attempts = state.get("max_human_attempts", 3)
 
-    if feedback:
-
-        state["feedback"] = feedback
-
-    state["human_attempts"] += 1
-
-    print(
-        f"[Router] Human rejected SQL. "
-        f"Attempt {state['human_attempts']}/"
-        f"{state['max_human_attempts']}"
-    )
-
-    # --------------------------------------------------------
-    # Maximum human attempts reached
-    # --------------------------------------------------------
-
-    if (
-        state["human_attempts"]
-        >= state["max_human_attempts"]
-    ):
-
+    if attempts >= max_attempts:
         state["status"] = "human_failed"
-
         return "end"
-
-    # --------------------------------------------------------
-    # Loop back to Node 2
-    # --------------------------------------------------------
 
     state["sql"] = None
     state["judge_approved"] = None
+    state["judge_feedback"] = None
     state["human_approved"] = None
-
     return "node_generator"
 
 
@@ -316,146 +235,42 @@ def route_after_human(state: AgentState) -> str:
 # ============================================================
 
 def route_after_execution(state: AgentState) -> str:
-    """
-    Execution successful:
-        → Node 6
-
-    Execution failed:
-        → Node 2 SQL Generator
-
-    Maximum execution attempts:
-        → END
-    """
-
-    # --------------------------------------------------------
-    # Execution successful
-    # --------------------------------------------------------
-
     if not state.get("execution_error"):
         return "node_explainer"
 
-    # --------------------------------------------------------
-    # Execution failed
-    # --------------------------------------------------------
-
-    attempts = state.get(
-        "execution_attempts",
-        0
-    )
-
-    max_attempts = state.get(
-        "max_execution_attempts",
-        3
-    )
-
-    print(
-        f"[Router] Execution failed. "
-        f"Attempt {attempts}/{max_attempts}"
-    )
-
-    # --------------------------------------------------------
-    # Maximum attempts
-    # --------------------------------------------------------
+    attempts = state.get("execution_attempts", 0)
+    max_attempts = state.get("max_execution_attempts", 3)
 
     if attempts >= max_attempts:
-
-        print(
-            "[Router] ❌ Maximum execution attempts reached."
-        )
-
         state["status"] = "execution_failed"
-
         return "end"
 
-    # --------------------------------------------------------
-    # Give execution error to Node 2
-    # --------------------------------------------------------
-
-    state["feedback"] = state.get(
-        "execution_error",
-        "SQL execution failed."
-    )
-
+    state["feedback"] = state.get("execution_error", "SQL execution failed.")
     state["sql"] = None
     state["judge_approved"] = None
     state["human_approved"] = None
-
     return "node_generator"
+
 
 # ============================================================
 # BUILD LANGGRAPH
 # ============================================================
 
 def build_graph():
-
     builder = StateGraph(AgentState)
 
-    # --------------------------------------------------------
-    # Add Nodes
-    # --------------------------------------------------------
+    builder.add_node("node_connect", node_connect)
+    builder.add_node("node_schema", node_schema)
+    builder.add_node("node_generator", node_generator)
+    builder.add_node("node_judge", node_judge)
+    builder.add_node("node_human", node_human)
+    builder.add_node("node_executor", node_executor)
+    builder.add_node("node_explainer", node_explainer)
 
-    builder.add_node(
-        "node_connect",
-        node_connect
-    )
-
-    builder.add_node(
-        "node_schema",
-        node_schema
-    )
-
-    builder.add_node(
-        "node_generator",
-        node_generator
-    )
-
-    builder.add_node(
-        "node_judge",
-        node_judge
-    )
-
-    builder.add_node(
-        "node_human",
-        node_human
-    )
-
-    builder.add_node(
-        "node_executor",
-        node_executor
-    )
-
-    builder.add_node(
-        "node_explainer",
-        node_explainer
-    )
-
-    # --------------------------------------------------------
-    # Straight Edges
-    # --------------------------------------------------------
-
-    builder.add_edge(
-        START,
-        "node_connect"
-    )
-
-    builder.add_edge(
-        "node_connect",
-        "node_schema"
-    )
-
-    builder.add_edge(
-        "node_schema",
-        "node_generator"
-    )
-
-    builder.add_edge(
-        "node_generator",
-        "node_judge"
-    )
-
-    # --------------------------------------------------------
-    # Node 3 → Node 2 / Node 4 / END
-    # --------------------------------------------------------
+    builder.add_edge(START, "node_connect")
+    builder.add_edge("node_connect", "node_schema")
+    builder.add_edge("node_schema", "node_generator")
+    builder.add_edge("node_generator", "node_judge")
 
     builder.add_conditional_edges(
         "node_judge",
@@ -467,10 +282,6 @@ def build_graph():
         }
     )
 
-    # --------------------------------------------------------
-    # Node 4 → Node 2 / Node 5 / END
-    # --------------------------------------------------------
-
     builder.add_conditional_edges(
         "node_human",
         route_after_human,
@@ -480,10 +291,6 @@ def build_graph():
             "end": END
         }
     )
-
-    # --------------------------------------------------------
-    # Node 5 → Node 2 / Node 6 / END
-    # --------------------------------------------------------
 
     builder.add_conditional_edges(
         "node_executor",
@@ -495,16 +302,9 @@ def build_graph():
         }
     )
 
-    # --------------------------------------------------------
-    # Node 6 → END
-    # --------------------------------------------------------
+    builder.add_edge("node_explainer", END)
 
-    builder.add_edge(
-        "node_explainer",
-        END
-    )
-
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)
 
 
 # ============================================================
@@ -513,282 +313,155 @@ def build_graph():
 
 def run_agent(
     question: str,
-    db_url: str = "postgresql://postgres:password@localhost:5433/ecommerce",
+    db_url: str = os.getenv("DATABASE_URL"),
     demo_mode: bool = False,
     skip_human: bool = False,
     resume: bool = False,
     human_decision: dict = None,
-    state: dict = None
+    state: dict = None,
+    thread_id: str = None
 ) -> dict:
 
-    # ========================================================
+    if thread_id is None:
+        thread_id = str(uuid4())
+
+    config = {"configurable": {"thread_id": thread_id}}
+    graph = build_graph()
+
+    # ============================================================
     # RESUME EXISTING RUN
-    # ========================================================
+    # ============================================================
+    if resume:
+        print(f"[Agent] Resuming LangGraph thread: {thread_id}")
+        if not human_decision:
+            return {
+                "status": "human_rejected",
+                "error": "No human decision provided.",
+                "thread_id": thread_id
+            }
 
-    if resume and state:
+        result = graph.invoke(Command(resume=human_decision), config=config)
 
-        print("[Agent] Resuming previous state...")
+        if "__interrupt__" in result:
+            return _format_interrupted_result(result, thread_id, graph)
 
-        # ----------------------------------------------------
-        # Apply human decision received from UI
-        # ----------------------------------------------------
+        return _format_result(result, thread_id)
 
-        if human_decision:
-
-            if human_decision.get("approved"):
-
-                state["human_approved"] = True
-                state["human_feedback"] = None
-                state["status"] = "approved"
-
-            elif human_decision.get("feedback"):
-
-                state["human_approved"] = False
-
-                state["human_feedback"] = (
-                    human_decision["feedback"]
-                )
-
-                state["feedback"] = (
-                    human_decision["feedback"]
-                )
-
-                state["sql"] = None
-                state["judge_approved"] = None
-                state["status"] = "feedback"
-
-            else:
-
-                return {
-                    "status": "human_rejected",
-                    "error": "No valid human decision provided."
-                }
-
-        graph = build_graph()
-
-        result = graph.invoke(state)
-
-        return _format_result(result)
-
-    # ========================================================
+    # ============================================================
     # NEW RUN
-    # ========================================================
-    #
-    # IMPORTANT:
-    # Node 1.1 and Node 1.2 are NOT executed manually here.
-    #
-    # LangGraph starts at:
-    #
-    # START
-    #   ↓
-    # Node 1.1 Connect
-    #   ↓
-    # Node 1.2 Schema
-    #   ↓
-    # Node 2 Generator
-    #
-    # This keeps the complete workflow inside LangGraph.
-    # ========================================================
-
+    # ============================================================
     initial_state: AgentState = {
-
         "db_url": db_url,
-
         "db_type": "unknown",
-
         "adapter": None,
-
         "schema_metadata": None,
-
         "filtered_schema": None,
-
         "question": question,
-
         "sql": None,
-
         "feedback": None,
 
-        # Node 2 informational counter
+        # Generator (no max)
         "attempts": 0,
 
-        # ----------------------------------------------------
         # Judge
-        # ----------------------------------------------------
-
         "judge_approved": None,
-
         "judge_feedback": None,
-
         "judge_attempts": 0,
-
         "max_judge_attempts": 3,
 
-        # ----------------------------------------------------
         # Human
-        # ----------------------------------------------------
-
         "human_approved": None,
-
         "human_feedback": None,
-
         "human_attempts": 0,
-
         "max_human_attempts": 3,
 
-        # ----------------------------------------------------
         # Execution
-        # ----------------------------------------------------
-
         "execution_error": None,
-
         "execution_attempts": 0,
-
         "max_execution_attempts": 3,
 
         "data": None,
-
         "columns": None,
+        "row_count": 0,
 
-        # ----------------------------------------------------
-        # Final result
-        # ----------------------------------------------------
-
+        # Final
         "summary": None,
-
         "status": "starting",
-
         "metrics": {},
 
-        # ----------------------------------------------------
         # Modes
-        # ----------------------------------------------------
-
         "demo_mode": demo_mode,
-
         "skip_human": skip_human
     }
 
-    # ========================================================
-    # BUILD + INVOKE LANGGRAPH
-    # ========================================================
+    result = graph.invoke(initial_state, config=config)
 
-    graph = build_graph()
+    if "__interrupt__" in result:
+        return _format_interrupted_result(result, thread_id, graph)
 
-    result = graph.invoke(initial_state)
+    return _format_result(result, thread_id)
 
-    return _format_result(result)
+
+# ============================================================
+# FORMAT INTERRUPTED RESULT
+# ============================================================
+
+def _format_interrupted_result(result: dict, thread_id: str, graph) -> dict:
+    interrupts = result.get("__interrupt__", [])
+    if not interrupts:
+        return {"status": "needs_human_approval", "thread_id": thread_id}
+
+    interrupt_value = interrupts[0].value
+    config = {"configurable": {"thread_id": thread_id}}
+    current_state = graph.get_state(config).values
+
+    return {
+        "status": "needs_human_approval",
+        "thread_id": thread_id,
+        "sql": current_state.get("sql"),
+        "question": current_state.get("question"),
+        "judge_feedback": current_state.get("judge_feedback"),
+        "interrupt": interrupt_value,
+        "state": current_state
+    }
 
 
 # ============================================================
 # FORMAT FINAL RESULT
 # ============================================================
 
-def _format_result(state: dict) -> dict:
-
+def _format_result(state: dict, thread_id: str = None) -> dict:
+    metrics = state.get("metrics", {})
     total_time = sum(
-        state["metrics"].get(key, 0)
-        for key in [
-            "generator_latency",
-            "judge_latency",
-            "execution_time"
-        ]
+        metrics.get(key, 0)
+        for key in ["generator_latency", "judge_latency", "execution_time"]
     )
 
     return {
-
         "sql": state.get("sql"),
-
         "data": state.get("data"),
-
         "columns": state.get("columns"),
-
         "summary": state.get("summary"),
-
-        "status": state.get(
-            "status",
-            "success"
-        ),
-
+        "status": state.get("status", "success"),
+        "thread_id": thread_id,
         "attempts": {
-
-            "judge": state.get(
-                "judge_attempts",
-                0
-            ),
-
-            "human": state.get(
-                "human_attempts",
-                0
-            ),
-
-            "execution": state.get(
-                "execution_attempts",
-                0
-            )
-
+            "judge": state.get("judge_attempts", 0),
+            "human": state.get("human_attempts", 0),
+            "execution": state.get("execution_attempts", 0)
         },
-
         "metrics": {
-
-            "generator_input_tokens":
-                state["metrics"].get(
-                    "generator_input_tokens",
-                    0
-                ),
-
-            "generator_output_tokens":
-                state["metrics"].get(
-                    "generator_output_tokens",
-                    0
-                ),
-
-            "generator_latency":
-                state["metrics"].get(
-                    "generator_latency",
-                    0
-                ),
-
-            "judge_input_tokens":
-                state["metrics"].get(
-                    "judge_input_tokens",
-                    0
-                ),
-
-            "judge_output_tokens":
-                state["metrics"].get(
-                    "judge_output_tokens",
-                    0
-                ),
-
-            "judge_latency":
-                state["metrics"].get(
-                    "judge_latency",
-                    0
-                ),
-
-            "execution_time":
-                state["metrics"].get(
-                    "execution_time",
-                    0
-                ),
-
-            "total_time":
-                total_time
+            "generator_input_tokens": metrics.get("generator_input_tokens", 0),
+            "generator_output_tokens": metrics.get("generator_output_tokens", 0),
+            "generator_latency": metrics.get("generator_latency", 0),
+            "judge_input_tokens": metrics.get("judge_input_tokens", 0),
+            "judge_output_tokens": metrics.get("judge_output_tokens", 0),
+            "judge_latency": metrics.get("judge_latency", 0),
+            "execution_time": metrics.get("execution_time", 0),
+            "total_time": total_time
         },
-
-        "judge_approved":
-            state.get("judge_approved"),
-
-        "judge_feedback":
-            state.get("judge_feedback"),
-
-        "human_approved":
-            state.get("human_approved"),
-
-        "human_feedback":
-            state.get("human_feedback"),
-
-        "execution_error":
-            state.get("execution_error")
+        "judge_approved": state.get("judge_approved"),
+        "judge_feedback": state.get("judge_feedback"),
+        "human_approved": state.get("human_approved"),
+        "human_feedback": state.get("human_feedback"),
+        "execution_error": state.get("execution_error")
     }
-
