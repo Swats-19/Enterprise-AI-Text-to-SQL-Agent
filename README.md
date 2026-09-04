@@ -126,15 +126,19 @@ Set-Location ui
 npm install
 ```
 
-Run the API and UI in separate terminals:
+Start both the API and UI:
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn api:app --host 127.0.0.1 --port 8000
-Set-Location ui
-npm run dev
+.\start-app.ps1
 ```
 
 Open `http://127.0.0.1:5173`.
+
+Stop both services with:
+
+```powershell
+.\stop-app.ps1
+```
 
 The React interface communicates with the existing LangGraph workflow through
 server-sent events. Pro mode pauses for human approval; Non-Pro mode
