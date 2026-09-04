@@ -216,7 +216,7 @@ def sql_generator(
         )
 
         print(
-            "🎬 [DEMO MODE] "
+            "[DEMO MODE] "
             "Intentionally generating WRONG SQL "
             "on first attempt..."
         )
@@ -231,7 +231,7 @@ WHERE total_amount > 100;
 """
 
         print(
-            "[DEMO] ❌ Generated WRONG SQL "
+            "[DEMO] Generated intentionally incorrect SQL "
             "(missing customer information):"
         )
 
@@ -785,7 +785,7 @@ Rejected:
     except Exception as e:
 
         print(
-            "[Node 3] ⚠️ "
+            "[Node 3] WARNING: "
             "Failed to parse judge response:",
             e
         )
@@ -852,7 +852,7 @@ Rejected:
 
     print(
         f"[Node 3] "
-        f"{'✅ APPROVED' if approved else '❌ REJECTED'} | "
+        f"{'APPROVED' if approved else 'REJECTED'} | "
         f"Tokens: "
         f"{input_tokens}+{output_tokens} | "
         f"Latency: {latency:.2f}s"
@@ -934,7 +934,7 @@ def sql_executor(
         )
 
         print(
-            f"[Node 5] ❌ "
+            f"[Node 5] ERROR: "
             f"Execution exception: {e}"
         )
 
@@ -992,7 +992,7 @@ def sql_executor(
         )
 
         print(
-            f"[Node 5] ✅ "
+            f"[Node 5] "
             f"Query executed successfully. "
             f"Rows: {actual_row_count} "
             f"(Time: {execution_time:.3f}s)"
@@ -1004,7 +1004,7 @@ def sql_executor(
         ):
 
             print(
-                f"[Node 5] 📦 Keeping first "
+                f"[Node 5] Keeping first "
                 f"{MAX_RESULT_ROWS} rows in state "
                 f"to keep LangGraph/LangSmith "
                 f"traces lightweight."
@@ -1048,7 +1048,7 @@ def sql_executor(
     # ========================================================
 
     print(
-        f"[Node 5] ❌ "
+        f"[Node 5] ERROR: "
         f"Query execution failed: "
         f"{result['error']}"
     )
@@ -1168,7 +1168,7 @@ def result_explainer(
             )
 
     print(
-        "[Node 6] ✅ "
+        "[Node 6] "
         "Summary generated."
     )
 

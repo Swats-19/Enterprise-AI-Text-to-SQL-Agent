@@ -263,13 +263,18 @@ class LLMClient:
 
         self.gemini_keys = []
 
+        for name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+            key = os.getenv(name)
+            if key and key not in self.gemini_keys:
+                self.gemini_keys.append(key)
+
         for i in range(1, 4):
 
             key = os.getenv(
                 f"GEMINI_API_KEY_{i}"
             )
 
-            if key:
+            if key and key not in self.gemini_keys:
                 self.gemini_keys.append(
                     key
                 )
@@ -322,6 +327,11 @@ class LLMClient:
         gemini_models,
         groq_models,
     ):
+
+        if not self.gemini_keys and not self.groq_keys and not self.cohere_keys:
+            raise RuntimeError(
+                "No LLM API key is configured. Add GEMINI_API_KEY_1 to .env."
+            )
 
         # ====================================================
         # GEMINI

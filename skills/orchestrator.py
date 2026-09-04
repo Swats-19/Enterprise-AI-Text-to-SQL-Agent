@@ -83,6 +83,27 @@ def node_judge(state: AgentState) -> AgentState:
     result = sql_judge(state)
     state.update(result)
     state["metrics"].update(result.get("metrics", {}))
+
+    if state.get("judge_approved") is True:
+        state["human_attempts"] = state.get("human_attempts", 0) + 1
+    else:
+        human_feedback = state.get("human_feedback")
+        judge_feedback = state.get("judge_feedback")
+        if human_feedback and judge_feedback:
+            state["feedback"] = (
+                f"Human requirement:\n{human_feedback}\n\n"
+                f"Judge feedback:\n{judge_feedback}"
+            )
+        else:
+            state["feedback"] = (
+                human_feedback
+                or judge_feedback
+                or "SQL was rejected by the judge."
+            )
+
+        if state["judge_attempts"] >= state.get("max_judge_attempts", 3):
+            state["status"] = "judge_failed"
+
     return state
 
 
@@ -158,6 +179,14 @@ def node_executor(state: AgentState) -> AgentState:
     result = sql_executor(exec_state)
     state.update(result)
     state["metrics"].update(result.get("metrics", {}))
+
+    if state.get("execution_error"):
+        state["feedback"] = state["execution_error"]
+        state["judge_approved"] = None
+        state["human_approved"] = None
+        if state["execution_attempts"] >= state.get("max_execution_attempts", 3):
+            state["status"] = "execution_failed"
+
     return state
 
 
@@ -177,8 +206,6 @@ def node_explainer(state: AgentState) -> AgentState:
 
 def route_after_judge(state: AgentState) -> str:
     if state.get("judge_approved") is True:
-        # A new human approval cycle starts here
-        state["human_attempts"] = state.get("human_attempts", 0) + 1
         print(f"[Router] Human approval #{state['human_attempts']} begins.")
         return "node_human"
 
@@ -187,19 +214,8 @@ def route_after_judge(state: AgentState) -> str:
     max_attempts = state.get("max_judge_attempts", 3)
 
     if attempts >= max_attempts:
-        state["status"] = "judge_failed"
         return "end"
 
-    # Combine feedbacks if both exist
-    human_fb = state.get("human_feedback")
-    judge_fb = state.get("judge_feedback")
-    if human_fb and judge_fb:
-        state["feedback"] = f"Human requirement:\n{human_fb}\n\nJudge feedback:\n{judge_fb}"
-    else:
-        state["feedback"] = human_fb or judge_fb or "SQL was rejected by the judge."
-
-    state["sql"] = None
-    state["judge_approved"] = None
     return "node_generator"
 
 
@@ -220,13 +236,8 @@ def route_after_human(state: AgentState) -> str:
     max_attempts = state.get("max_human_attempts", 3)
 
     if attempts >= max_attempts:
-        state["status"] = "human_failed"
         return "end"
 
-    state["sql"] = None
-    state["judge_approved"] = None
-    state["judge_feedback"] = None
-    state["human_approved"] = None
     return "node_generator"
 
 
@@ -242,13 +253,8 @@ def route_after_execution(state: AgentState) -> str:
     max_attempts = state.get("max_execution_attempts", 3)
 
     if attempts >= max_attempts:
-        state["status"] = "execution_failed"
         return "end"
 
-    state["feedback"] = state.get("execution_error", "SQL execution failed.")
-    state["sql"] = None
-    state["judge_approved"] = None
-    state["human_approved"] = None
     return "node_generator"
 
 
@@ -313,7 +319,7 @@ def build_graph():
 
 def run_agent(
     question: str,
-    db_url: str = os.getenv("DATABASE_URL"),
+    db_url: str = None,
     demo_mode: bool = False,
     skip_human: bool = False,
     resume: bool = False,
@@ -321,6 +327,12 @@ def run_agent(
     state: dict = None,
     thread_id: str = None
 ) -> dict:
+
+    db_url = db_url or os.getenv("DATABASE_URL")
+    if not db_url:
+        raise ValueError(
+            "DATABASE_URL is required. Add it to .env or pass db_url explicitly."
+        )
 
     if thread_id is None:
         thread_id = str(uuid4())
