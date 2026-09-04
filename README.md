@@ -108,39 +108,52 @@ The demo shows:
 
 ## Run Locally
 
-Install dependencies:
+Create and activate an isolated Python environment:
 
-```bash
-pip install -r requirements.txt
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 ```
 
-Add the required API keys to `.env`.
+Copy `.env.example` to `.env` and configure `DATABASE_URL` plus at least
+`GEMINI_API_KEY_1`.
 
-Run the monolithic version:
+Install the React UI:
 
-```bash
-streamlit run mon.py
+```powershell
+Set-Location ui
+npm install
 ```
 
-Run the agentic version:
+Run the API and UI in separate terminals:
 
-```bash
-streamlit run skills_ui.py
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn api:app --host 127.0.0.1 --port 8000
+Set-Location ui
+npm run dev
 ```
+
+Open `http://127.0.0.1:5173`.
+
+The React interface communicates with the existing LangGraph workflow through
+server-sent events. Pro mode pauses for human approval; Non-Pro mode
+automatically approves the query. Both modes enforce read-only SQL.
 
 ## Project Structure
 
 ```text
 text_to_sql/
 ├── database/
-├── adapters/
 ├── skills/
+├── ui/
+├── api.py
 ├── llm.py
 ├── prompt.py
 ├── text_to_sql.py
 ├── execute.py
 ├── mon.py
-└── skills_ui.py
+└── skills.py
 ```
 
 **Developer : Swati Muttin**
