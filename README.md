@@ -108,6 +108,9 @@ The demo shows:
 
 ## Run Locally
 
+For complete first-time installation, PostgreSQL setup, testing, and
+troubleshooting, see [FIRST_TIME_SETUP.md](FIRST_TIME_SETUP.md).
+
 Create and activate an isolated Python environment:
 
 ```powershell

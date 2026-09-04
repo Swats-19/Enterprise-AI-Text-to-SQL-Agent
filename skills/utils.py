@@ -41,10 +41,11 @@ def detect_db_type(
 # ============================================================
 
 def get_relevant_tables(
-    question: str
+    question: str,
+    available_tables: List[str]
 ) -> List[str]:
 
-    """Extract table names relevant to the question."""
+    """Match a question against tables discovered from the live database."""
 
     keyword_to_table = {
 
@@ -118,39 +119,36 @@ def get_relevant_tables(
             "refunds"
     }
 
+    table_lookup = {
+        table.lower(): table
+        for table in available_tables
+    }
+    question_text = question.lower()
+    question_tokens = set(re.findall(r"[a-z0-9_]+", question_text))
     relevant = set()
 
-    q = question.lower()
+    for table in available_tables:
+        normalized = table.lower()
+        spaced = normalized.replace("_", " ")
+        variants = {
+            normalized,
+            spaced,
+            normalized.removesuffix("s"),
+            spaced.removesuffix("s"),
+        }
+        if any(
+            variant in question_tokens
+            or (len(variant) > 2 and variant in question_text)
+            for variant in variants
+        ):
+            relevant.add(table)
 
-    for keyword, table in (
-        keyword_to_table.items()
-    ):
+    for keyword, table in keyword_to_table.items():
+        actual_table = table_lookup.get(table)
+        if actual_table and keyword in question_tokens:
+            relevant.add(actual_table)
 
-        if keyword in q:
-
-            relevant.add(
-                table
-            )
-
-    # If nothing matched, provide the complete schema.
-    if not relevant:
-
-        return [
-            "customers",
-            "orders",
-            "products",
-            "order_items",
-            "categories",
-            "addresses",
-            "payments",
-            "shipments",
-            "reviews",
-            "refunds"
-        ]
-
-    return list(
-        relevant
-    )
+    return sorted(relevant) if relevant else list(available_tables)
 
 
 # ============================================================
@@ -166,17 +164,28 @@ def filter_schema(
 
     relevant_tables = (
         get_relevant_tables(
-            question
+            question,
+            list(full_schema)
         )
     )
 
+    related_tables = set(relevant_tables)
+    for table in relevant_tables:
+        for reference in full_schema[table].get("foreign_keys", {}).values():
+            referenced_table = reference.get("table")
+            if referenced_table in full_schema:
+                related_tables.add(referenced_table)
+
+    for table, info in full_schema.items():
+        references = info.get("foreign_keys", {}).values()
+        if any(reference.get("table") in related_tables for reference in references):
+            related_tables.add(table)
+
     filtered = {}
 
-    q_lower = question.lower()
+    for table in full_schema:
 
-    for table in relevant_tables:
-
-        if table not in full_schema:
+        if table not in related_tables:
 
             continue
 
@@ -200,34 +209,15 @@ def filter_schema(
             "foreign_keys"
         ]
 
-        kept_cols = [
-            column
-            for column in cols
-            if column.lower()
-            in q_lower
-        ]
-
-        # If no individual column names appear
-        # in the question, keep all columns.
-        if not kept_cols:
-
-            kept_cols = cols
-
-        kept_types = {
-            column:
-                types[column]
-            for column in kept_cols
-        }
-
         filtered[
             table
         ] = {
 
             "columns":
-                kept_cols,
+                cols,
 
             "types":
-                kept_types,
+                types,
 
             "pk":
                 pk,
