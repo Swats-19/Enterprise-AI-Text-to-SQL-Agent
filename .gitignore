@@ -6,4 +6,5 @@ __pycache__/
 notes/
 ui/node_modules/
 ui/dist/
+ui/.vite/
 .pytest_cache/

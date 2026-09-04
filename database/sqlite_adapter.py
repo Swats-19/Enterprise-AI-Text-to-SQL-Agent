@@ -1,7 +1,7 @@
 # database/sqlite_adapter.py
 import sqlite3
 from typing import Dict, List, Any
-from database.adapter import DatabaseAdapter
+from database.adapter import DatabaseAdapter, validate_read_only_query
 
 class SQLiteAdapter(DatabaseAdapter):
     def __init__(self, db_path: str = "ecommerce.db"):
@@ -36,13 +36,15 @@ class SQLiteAdapter(DatabaseAdapter):
         return schema
     
     def execute_query(self, sql: str) -> Dict[str, Any]:
+        conn = None
         try:
+            query = validate_read_only_query(sql)
             conn = self.get_connection()
+            conn.execute("PRAGMA query_only = ON")
             cursor = conn.cursor()
-            cursor.execute(sql)
+            cursor.execute(query)
             rows = cursor.fetchall()
             columns = [desc[0] for desc in cursor.description] if cursor.description else []
-            conn.close()
             return {
                 "success": True,
                 "data": rows,
@@ -56,3 +58,6 @@ class SQLiteAdapter(DatabaseAdapter):
                 "columns": [],
                 "error": str(e)
             }
+        finally:
+            if conn:
+                conn.close()

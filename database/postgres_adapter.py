@@ -1,32 +1,43 @@
 # database/postgres_adapter.py
 
 import psycopg2
-from psycopg2 import sql
 from typing import Dict, List, Any, Optional
-from database.adapter import DatabaseAdapter
+from database.adapter import DatabaseAdapter, validate_read_only_query
 
 
 class PostgreSQLAdapter(DatabaseAdapter):
     """PostgreSQL implementation of the DatabaseAdapter."""
     
-    def __init__(self, host: str, port: int, dbname: str, user: str, password: str):
+    def __init__(
+        self,
+        host: Optional[str] = None,
+        port: int = 5432,
+        dbname: Optional[str] = None,
+        user: Optional[str] = None,
+        password: Optional[str] = None,
+        connection_url: Optional[str] = None,
+    ):
         self.host = host
         self.port = port
         self.dbname = dbname
         self.user = user
         self.password = password
+        self.connection_url = connection_url
         self._connection = None
     
     def get_connection(self):
         """Return a connection to the PostgreSQL database."""
         if self._connection is None or self._connection.closed:
-            self._connection = psycopg2.connect(
-                host=self.host,
-                port=self.port,
-                dbname=self.dbname,
-                user=self.user,
-                password=self.password
-            )
+            if self.connection_url:
+                self._connection = psycopg2.connect(self.connection_url)
+            else:
+                self._connection = psycopg2.connect(
+                    host=self.host,
+                    port=self.port,
+                    dbname=self.dbname,
+                    user=self.user,
+                    password=self.password,
+                )
         return self._connection
 
     # ============================================================
@@ -128,10 +139,13 @@ class PostgreSQLAdapter(DatabaseAdapter):
             "error": None or str
         }
         """
+        conn = None
         try:
+            query = validate_read_only_query(sql)
             conn = self.get_connection()
             cursor = conn.cursor()
-            cursor.execute(sql)
+            cursor.execute("SET TRANSACTION READ ONLY")
+            cursor.execute(query)
             
             # Get column names
             columns = [desc[0] for desc in cursor.description] if cursor.description else []
@@ -139,7 +153,6 @@ class PostgreSQLAdapter(DatabaseAdapter):
             # Fetch all rows
             rows = cursor.fetchall()
             
-            conn.close()
             return {
                 "success": True,
                 "data": rows,
@@ -147,12 +160,17 @@ class PostgreSQLAdapter(DatabaseAdapter):
                 "error": None
             }
         except Exception as e:
+            if conn and not conn.closed:
+                conn.rollback()
             return {
                 "success": False,
                 "data": [],
                 "columns": [],
                 "error": str(e)
             }
+        finally:
+            if conn and not conn.closed:
+                conn.close()
     
     def test_connection(self) -> bool:
         """Test if the connection works."""
