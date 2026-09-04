@@ -122,18 +122,6 @@ function buildRunningSnapshot(contextId: string): StreamState {
   };
 }
 
-function splitMemberName(name: string) {
-  const parts = name.split(" ");
-  if (parts.length <= 1) {
-    return { firstLine: name, secondLine: "" };
-  }
-
-  return {
-    firstLine: parts[0],
-    secondLine: parts.slice(1).join(" "),
-  };
-}
-
 function parseSseEvent(rawEvent: string): StreamEnvelope | null {
   const normalized = rawEvent.replace(/\r/g, "").trim();
   if (!normalized) {
@@ -1008,56 +996,6 @@ function getExecutionModeLabel(mode: DataSourceState["executionMode"]) {
 
 function getAccessModeLabel(mode: DataSourceState["accessMode"]) {
   return mode === "read_only" ? "Read only" : "Write enabled";
-}
-
-const teamMembers = [
-  {
-    name: "Hrithik Muttin",
-    imageSrc: "/team/hrithik.jpg",
-    imagePosition: "50% 22%",
-  },
-  {
-    name: "Naveen Kusakula",
-    imageSrc: "/team/naveen.jpeg",
-    imagePosition: "50% 22%",
-  },
-  {
-    name: "Manjunatha Mallappa",
-    imageSrc: "/team/manjunatha.png",
-    imagePosition: "50% 18%",
-  },
-];
-
-function HPEMark() {
-  return (
-    <div className="alchemy-mark" aria-label="HPE text to SQL mark">
-      <div className="alchemy-brand-block">
-        <svg viewBox="0 0 96 40" className="alchemy-logo simple-hpe-logo" role="img" aria-hidden="true">
-          <rect x="10" y="10" width="76" height="20" rx="3" fill="none" stroke="currentColor" strokeWidth="6" />
-        </svg>
-        <div className="alchemy-brand-copy">
-          <p className="brand-overline">HPE</p>
-          <strong className="alchemy-brand-name">Alchemy007</strong>
-        </div>
-      </div>
-      <div className="alchemy-team-inline" aria-label="Team members">
-        {teamMembers.map((member) => (
-          <div key={member.name} className="alchemy-team-member">
-            <img
-              className="alchemy-team-avatar image-avatar"
-              src={member.imageSrc}
-              alt={member.name}
-              style={{ objectPosition: member.imagePosition }}
-            />
-            <span className="alchemy-team-meta">
-              <strong>{splitMemberName(member.name).firstLine}</strong>
-              <span className="team-name-second-line">{splitMemberName(member.name).secondLine}</span>
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 function RaceCarIcon() {
@@ -2847,7 +2785,6 @@ function App() {
       <section className="hero cinematic-hero">
         <div className="hero-copy-block">
           <div className="hero-topbar">
-            <HPEMark />
             <div className="hero-utility-stack">
               <ThemeToggleButton
                 theme={theme}

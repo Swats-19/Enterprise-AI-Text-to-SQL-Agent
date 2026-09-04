@@ -182,127 +182,6 @@ button {
   filter: blur(20px);
 }
 
-.alchemy-mark {
-  display: grid;
-  grid-template-columns: minmax(240px, 0.72fr) minmax(0, 1.28fr);
-  align-items: center;
-  gap: 24px;
-  margin-bottom: 0;
-  padding: 12px 22px 12px 14px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(75, 217, 255, 0.2);
-  width: min(100%, 1080px);
-}
-
-.alchemy-brand-block {
-  display: inline-flex;
-  align-items: center;
-  gap: 18px;
-  min-width: 0;
-  padding-right: 22px;
-  border-right: 1px solid rgba(137, 170, 255, 0.14);
-}
-
-.alchemy-brand-copy {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.brand-overline {
-  margin: 0;
-  color: var(--ink);
-  font-size: 1.05rem;
-  letter-spacing: 0.01em;
-  line-height: 1;
-}
-
-.alchemy-brand-name {
-  display: block;
-  font-size: 1.06rem;
-  line-height: 1;
-}
-
-.alchemy-team-inline {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  align-items: center;
-  gap: 0;
-  min-width: 0;
-  justify-content: stretch;
-}
-
-.alchemy-team-member {
-  display: grid;
-  grid-template-columns: 38px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  padding: 0 0 0 14px;
-  border-left: 1px solid rgba(137, 170, 255, 0.14);
-  min-height: 56px;
-}
-
-.alchemy-team-avatar {
-  width: 36px;
-  height: 36px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  background: linear-gradient(135deg, rgba(66, 245, 215, 0.2), rgba(75, 217, 255, 0.22));
-  color: var(--ink);
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-
-.image-avatar {
-  object-fit: cover;
-  object-position: center;
-  border: 1px solid rgba(137, 170, 255, 0.18);
-  box-shadow: 0 0 0 2px rgba(7, 13, 27, 0.22);
-}
-
-.alchemy-team-meta {
-  display: grid;
-  align-content: center;
-  gap: 2px;
-  min-width: 0;
-  min-height: 38px;
-}
-
-.alchemy-team-meta strong {
-  display: block;
-  font-size: 0.8rem;
-  line-height: 1.02;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.team-name-second-line {
-  display: block;
-  color: rgba(235, 243, 255, 0.86);
-  font-size: 0.72rem;
-  line-height: 1.02;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.alchemy-logo {
-  width: 150px;
-  color: var(--teal);
-  filter: drop-shadow(0 0 10px rgba(66, 245, 215, 0.35));
-}
-
-.simple-hpe-logo {
-  width: 92px;
-  height: 34px;
-}
-
 .eyebrow {
   margin: 0 0 8px;
   text-transform: uppercase;
@@ -3172,7 +3051,6 @@ th {
   background: linear-gradient(180deg, rgba(255, 240, 244, 0.96), rgba(255, 231, 237, 0.94));
 }
 
-:root[data-theme="light"] .alchemy-mark,
 :root[data-theme="light"] .ghost-button,
 :root[data-theme="light"] .datasource-mode-shell,
 :root[data-theme="light"] .datasource-mode-button,
@@ -3186,10 +3064,6 @@ th {
   background: linear-gradient(180deg, rgba(233, 241, 252, 0.94), rgba(225, 235, 248, 0.92));
   border-color: rgba(91, 121, 170, 0.18);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72), 0 10px 28px rgba(64, 89, 132, 0.08);
-}
-
-:root[data-theme="light"] .alchemy-team-member {
-  border-left-color: rgba(91, 121, 170, 0.14);
 }
 
 :root[data-theme="light"] .datasource-modal {
@@ -3711,10 +3585,6 @@ th {
     max-width: none;
   }
 
-  .alchemy-mark {
-    min-width: 0;
-    width: 100%;
-  }
 }
 
 @media (max-width: 1200px) {
@@ -3734,29 +3604,6 @@ th {
 
   .theme-toggle {
     align-self: flex-start;
-  }
-
-  .alchemy-mark {
-    border-radius: 28px;
-    grid-template-columns: 1fr;
-    align-items: stretch;
-  }
-
-  .alchemy-brand-block {
-    padding-right: 0;
-    padding-bottom: 12px;
-    border-right: 0;
-    border-bottom: 1px solid rgba(137, 170, 255, 0.14);
-  }
-
-  .alchemy-team-inline {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    justify-content: flex-start;
-  }
-
-  .alchemy-team-member:first-child {
-    border-left: 0;
-    padding-left: 0;
   }
 
   .hero-runtime-grid {
@@ -3839,16 +3686,6 @@ th {
 
   .summary-prompt {
     padding-top: 0;
-  }
-
-  .alchemy-team-inline {
-    grid-template-columns: 1fr;
-    gap: 8px;
-  }
-
-  .alchemy-team-member {
-    border-left: 0;
-    padding-left: 0;
   }
 
   .theme-toggle {
