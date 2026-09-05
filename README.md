@@ -87,7 +87,7 @@ The challenge is making that translation trustworthy. That is where the validati
 ## Demo
 
 **5-Minute Pitch Video:**
-[Add YouTube link]
+https://youtu.be/GKQ0r-5ej4E
 
 The demo shows:
 
